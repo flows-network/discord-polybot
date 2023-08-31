@@ -261,7 +261,7 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
             .edit_original_interaction_response(
                 &ac.token,
                 &(json!(
-                    {"content": "You didn't input any url for me to fetch, please input codes in your next message"}
+                    {"content": "You didn't input any url for me to fetch, please input text in your next message"}
                 )),
             )
             .await;
