@@ -6,7 +6,6 @@ use discord_flows::{
     message_handler,
     model::{
         application::interaction::InteractionResponseType,
-        application_command::CommandDataOptionValue,
         prelude::application::interaction::application_command::ApplicationCommandInteraction,
         Attachment, Message,
     },
@@ -82,24 +81,12 @@ async fn handle(msg: Message) {
         return;
     }
 
-    let mut msg_question = msg.content.to_string();
     if msg.member.is_some() {
         let mut mentions_me = false;
         for u in &msg.mentions {
             log::debug!("The user ID is {}", u.id.as_u64());
             if *u.id.to_string() == bot_id {
                 mentions_me = true;
-                msg_question = msg_question
-                    .chars()
-                    .skip_while(|&c| c != ' ')
-                    .skip(1) // Skip the space itself
-                    .collect::<String>();
-
-                msg_question = if msg_question.len() < 100 {
-                    format!("Here is an input from the user: '{}'. If this is a question related to the previous task or source content, please provide the answer. If it is not a question, process it as new content.", msg_question)
-                } else {
-                    msg_question
-                };
                 break;
             }
         }
@@ -109,37 +96,37 @@ async fn handle(msg: Message) {
         }
     }
 
-    let ocr = if msg.attachments.len() > 0 {
-        let res = process_attachments(&msg, &client).await;
-        slack_flows::send_message_to_channel("ik8", "ch_err", res.to_string()).await;
-        res
-    } else {
-        String::new()
-    };
-
-    let memory = match store::get("bot_memory") {
-        Some(m) => m.as_str().unwrap_or("").to_string(),
-        None => String::new(),
-    };
+    if msg.attachments.len() == 0 && msg.content.trim().is_empty() {
+        return;
+    }
 
     if let Some((key, system_prompt, restart)) = prompt_checking() {
-        let question = if (msg_question.is_empty() && memory.is_empty()) {
-            format!("Here is original user input: {:?}.", ocr)
-        } else {
-            format!(
-                "Here is original user input: {:?}\n{:?}. {:?}",
-                memory, ocr, msg_question
-            )
+        let mut question = String::new();
+
+        match msg.attachments.len() {
+            0 => {
+                let clean_input = msg
+                    .content
+                    .chars()
+                    .skip_while(|&c| c != ' ')
+                    .skip(1)
+                    .collect::<String>();
+                question = clean_input.clone();
+                if key.as_str() == "summarize" {
+                    let possible_url = clean_input.trim().to_string();
+
+                    if let Ok(u) = http_req::uri::Uri::try_from(possible_url.as_str()) {
+                        match get_page_text(&possible_url).await {
+                            Ok(text) => question = text,
+                            Err(_e) => {}
+                        };
+                    }
+                }
+            }
+            _ => {
+                question = process_attachments(&msg, &client).await;
+            }
         };
-
-        set_bot_memory(&format!("{}\n{}", memory, ocr.clone()));
-
-        // slack_flows::send_message_to_channel(
-        //     "ik8",
-        //     "ch_err",
-        //     format!("question/mem now: {} ", question.clone()),
-        // )
-        // .await;
 
         if let Some(res) = process_input(&system_prompt, &question, restart).await {
             let resps = sub_strings(&res, 1800);
@@ -172,7 +159,6 @@ async fn handle(msg: Message) {
 
 #[application_command_handler]
 async fn handler(ac: ApplicationCommandInteraction) {
-    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
     let token = env::var("discord_token").unwrap();
     let channel_id = env::var("discord_channel_id").unwrap_or("channel_id not found".to_string());
 
@@ -198,171 +184,41 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         )
         .await;
 
-    let ac_token_head = ac.token.chars().take(8).collect::<String>();
-    let options = &ac.data.options;
-    let mut current_prompt_key = "";
-    let mut global_text_carrier = String::new();
-    let mut msg = String::new();
-    let mut no_input = false;
+    let mut msg = "";
     let help_msg = env::var("help_msg").unwrap_or("You can enter text or upload an image with text to chat with this bot. The bot can take several different assistant roles. Type command /qa or /translate or /summarize or /medical or /code or /reply_tweet to start.".to_string());
 
     match ac.data.name.as_str() {
         "help" => {
-            _ = client
-                .edit_original_interaction_response(
-                    &ac.token,
-                    &(json!(
-                        { "content": &help_msg }
-                    )),
-                )
-                .await;
-            return;
+            msg = &help_msg;
         }
         "start" => {
-            current_prompt_key = "start";
-            msg = help_msg.clone();
+            set_current_prompt_key("start");
+            msg = &help_msg;
         }
         "summarize" => {
-            current_prompt_key = "summarize";
             set_current_prompt_key("summarize");
-
-            let url = options.get(0).and_then(|opt| {
-                opt.resolved.as_ref().and_then(|val| match val {
-                    CommandDataOptionValue::String(s) => Some(s.as_str()),
-                    _ => None,
-                })
-            });
-
-            match url {
-                Some(u) => match get_page_text(&u).await {
-                    Ok(text) => {
-                        global_text_carrier = text.clone();
-
-                        set_bot_memory(&text);
-
-                        msg = format!("Summarizing the text from {}", u);
-                    }
-                    Err(_e) => {
-                        _ = client
-                                .edit_original_interaction_response(
-                                    &ac.token,
-                                    &(json!(
-                                        {"content": "You may have input an incorrect url or the Bot failed to get content from the url, please put the url or the texts to summarize in your next message"}
-                                    )),
-                                )
-                                .await;
-                        return;
-                    }
-                },
-                None => no_input = true,
-            };
-            if no_input {
-                _ = client
-            .edit_original_interaction_response(
-                &ac.token,
-                &(json!(
-                    {"content": "You didn't input any url for me to fetch, please input text in your next message"}
-                )),
-            )
-            .await;
-                return;
-            };
+            msg = "I'm ready to summarize, please input a url or text";
         }
         "code" => {
             set_current_prompt_key("code");
-
-            _ = client
-                .edit_original_interaction_response(
-                    &ac.token,
-                    &(json!(
-                        {"content": "I'm ready to review source code"}
-                    )),
-                )
-                .await;
-            return;
+            msg = "I'm ready to review source code";
         }
         "medical" => {
             set_current_prompt_key("medical");
-
-            _ = client
-                    .edit_original_interaction_response(
-                        &ac.token,
-                        &(json!(
-                            { "content": "I am ready to review and summarize doctor notes or medical test results" }
-                        )),
-                    )
-                    .await;
-
-            return;
+            msg = "I am ready to review and summarize doctor notes or medical test results";
         }
         "translate" => {
-            current_prompt_key = "translate";
             set_current_prompt_key("translate");
-            match options.get(0).and_then(|opt| opt.resolved.as_ref()) {
-                Some(CommandDataOptionValue::String(s)) => {
-                    global_text_carrier = s.as_str().to_string();
 
-                    msg = "Translating ...".to_string();
-                }
-                _ => no_input = true,
-            };
-            if no_input {
-                _ = client
-            .edit_original_interaction_response(
-                &ac.token,
-                &(json!(
-                    {"content": "You didn't input any text to translate, please input text in your next message"}
-                )),
-            )
-            .await;
-                return;
-            };
+            msg = "I'm ready to translate";
         }
         "reply_tweet" => {
-            current_prompt_key = "reply_tweet";
             set_current_prompt_key("reply_tweet");
-            match options.get(0).and_then(|opt| opt.resolved.as_ref()) {
-                Some(CommandDataOptionValue::String(s)) => {
-                    global_text_carrier = s.as_str().to_string();
-
-                    msg = "Working on the reply".to_string();
-                }
-                _ => no_input = true,
-            };
-            if no_input {
-                _ = client
-            .edit_original_interaction_response(
-                &ac.token,
-                &(json!(
-                    {"content": "You didn't input any tweet for me to work with, please input it in your next message"}
-                )),
-            )
-            .await;
-                return;
-            };
+            msg = "I'm ready to process your tweet";
         }
         "qa" => {
-            current_prompt_key = "qa";
             set_current_prompt_key("qa");
-            match options.get(0).and_then(|opt| opt.resolved.as_ref()) {
-                Some(CommandDataOptionValue::String(s)) => {
-                    global_text_carrier = s.as_str().to_string();
-
-                    msg = "Working on the answer for you".to_string();
-                }
-                _ => no_input = true,
-            };
-            if no_input {
-                _ = client
-            .edit_original_interaction_response(
-                &ac.token,
-                &(json!(
-                    {"content": "I didn't see any text to reply to, please input your question in your next message"}
-                )),
-            )
-            .await;
-                return;
-            };
+            msg = "I'm ready for your questions";
         }
         _ => {}
     }
@@ -370,7 +226,7 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         .edit_original_interaction_response(
             &ac.token,
             &(json!(
-                { "content": &msg }
+                { "content": msg }
             )),
         )
         .await;
@@ -382,49 +238,6 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
             value: 0,
         }),
     );
-
-    if global_text_carrier.is_empty() || current_prompt_key.is_empty() {
-        return;
-    }
-    set_current_prompt_key(current_prompt_key);
-
-    let system_prompt = PROMPTS
-        .get(current_prompt_key)
-        .unwrap_or(&Value::Null)
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-
-    if let Some(res) = process_input(&system_prompt, &global_text_carrier, true).await {
-        let resps = sub_strings(&res, 1800);
-
-        _ = client
-            .edit_original_interaction_response(
-                &ac.token,
-                &serde_json::json!({
-                    "content": resps[0]
-                }),
-            )
-            .await;
-        if resps.len() > 1 {
-            for resp in resps.iter().skip(1) {
-                let content = &format!("Question: {}", resp);
-                _ = client
-                    .create_interaction_response(
-                        ac.id.into(),
-                        &ac.token,
-                        &json!(                {
-                            "type": 4,
-                            "data": {
-                                "content": content
-                            }
-                        }),
-                    )
-                    .await;
-            }
-        }
-    }
-    global_text_carrier.clear();
 
     return;
 }
@@ -502,7 +315,8 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
     let res = attachments
         .iter()
         .filter_map(|a| {
-            typ = a.content_type
+            typ = a
+                .content_type
                 .as_deref()
                 .unwrap_or("no file type")
                 .to_string();
@@ -546,9 +360,6 @@ async fn process_input(system_prompt: &str, question: &str, restart: bool) -> Op
     let mut openai = OpenAIFlows::new();
     openai.set_retry_times(2);
 
-    if restart {
-        set_bot_memory(&question);
-    }
     let co = ChatOptions {
         // model: ChatModel::GPT4,
         model: ChatModel::GPT35Turbo16K,
@@ -569,15 +380,15 @@ async fn process_input(system_prompt: &str, question: &str, restart: bool) -> Op
     }
 }
 
-fn get_image_urls(attachments: Vec<Attachment>) -> Vec<String> {
-    attachments
-        .iter()
-        .filter_map(|a| match a.content_type.as_ref() {
-            Some(ct) if ct.starts_with("image") => Some(a.url.clone()),
-            _ => None,
-        })
-        .collect()
-}
+// fn get_image_urls(attachments: Vec<Attachment>) -> Vec<String> {
+//     attachments
+//         .iter()
+//         .filter_map(|a| match a.content_type.as_ref() {
+//             Some(ct) if ct.starts_with("image") => Some(a.url.clone()),
+//             _ => None,
+//         })
+//         .collect()
+// }
 
 fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
     let mut subs = Vec::with_capacity(string.len() / sub_len);
@@ -611,14 +422,7 @@ pub async fn register_commands(discord_token: &str) -> bool {
         {
             "name": "summarize",
             "description": "Generate a summary on given url",
-            "options": [
-                {
-                    "name": "url",
-                    "description": "The url to get text and summarize on",
-                    "type": 3,
-                    "required": false
-                }
-            ]
+
         },
         {
             "name": "code",
@@ -631,38 +435,16 @@ pub async fn register_commands(discord_token: &str) -> bool {
         {
             "name": "translate",
             "description": "Translate anything into English",
-            "options": [
-                {
-                    "name": "text",
-                    "description": "Text you want to translate",
-                    "type": 3,
-                    "required": false
-                }
-            ]
+
         },
         {
             "name": "reply_tweet",
             "description": "Reply a tweet for you",
-            "options": [
-                {
-                    "name": "tweet_text",
-                    "description": "The tweet you want a reply for",
-                    "type": 3,
-                    "required": false
-                }
-            ]
         },
         {
             "name": "qa",
-            "description": "Ready for general QA",
-            "options": [
-                {
-                    "name": "question",
-                    "description": "Your question for QA",
-                    "type": 3,
-                    "required": false
-                }
-            ]
+            "description": "I'm ready for general QA",
+
         }
     ]);
 
@@ -684,17 +466,6 @@ pub async fn register_commands(discord_token: &str) -> bool {
             false
         }
     }
-}
-
-pub fn set_bot_memory(text: &str) {
-    store::set(
-        "bot_memory",
-        json!(text),
-        Some(Expire {
-            kind: store::ExpireKind::Ex,
-            value: 300,
-        }),
-    );
 }
 
 pub fn set_previous_prompt_key(key: &str) {
