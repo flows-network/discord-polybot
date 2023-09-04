@@ -116,8 +116,16 @@ async fn handle(msg: Message) {
                     let possible_url = clean_input.trim().to_string();
 
                     if let Ok(u) = http_req::uri::Uri::try_from(possible_url.as_str()) {
+                        slack_flows::send_message_to_channel("ik8", "ch_out", possible_url.clone())
+                            .await;
                         match get_page_text(&possible_url).await {
-                            Ok(text) => question = text,
+                            Ok(text) => {
+                                question = if text.len() > 36_000 {
+                                    text.chars().take(36_000).collect::<String>()
+                                } else {
+                                    text.clone()
+                                }
+                            }
                             Err(_e) => {}
                         };
                     }
@@ -258,7 +266,9 @@ async fn process_attachments(msg: &Message, client: &Http) -> String {
                     if res.status_code().is_success() {
                         let content = String::from_utf8_lossy(&writer);
 
-                        question.push_str(&content);
+                        slack_flows::send_message_to_channel("ik8", "general", format!("{:?}", content.clone()))
+                        .await;
+                         question.push_str(&content);
                     }
                 }
                 Err(_) => {
@@ -324,7 +334,7 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
                 if ct.starts_with("image") {
                     return Some((a.url.clone(), false));
                 }
-                if ct.starts_with("text") {
+                if ct.starts_with("txt") {
                     return Some((a.url.clone(), true));
                 }
             }
