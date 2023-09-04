@@ -243,7 +243,7 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         json!(String::new()),
         Some(Expire {
             kind: store::ExpireKind::Ex,
-            value: 0,
+            value: 1,
         }),
     );
 
@@ -341,7 +341,7 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
             None
         })
         .collect();
-    
+
     log::error!("{:?}", typ);
     log::info!("{:?}", typ);
     return res;
