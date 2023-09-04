@@ -334,13 +334,14 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
                 if ct.starts_with("image") {
                     return Some((a.url.clone(), false));
                 }
-                if ct.starts_with("txt") {
+                if ct.starts_with("text") {
                     return Some((a.url.clone(), true));
                 }
             }
             None
         })
         .collect();
+    
     log::error!("{:?}", typ);
     log::info!("{:?}", typ);
     return res;
