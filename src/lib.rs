@@ -438,7 +438,7 @@ pub fn set_previous_prompt_key(key: &str) {
         json!(key.to_string()),
         Some(Expire {
             kind: store::ExpireKind::Ex,
-            value: 60,
+            value: 300,
         }),
     );
 }
