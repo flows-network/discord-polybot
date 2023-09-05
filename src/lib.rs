@@ -48,7 +48,7 @@ pub async fn on_deploy() {
     dotenv().ok();
     logger::init();
     let discord_token = env::var("discord_token").unwrap();
-    let channel_id = env::var("discord_channel_id").unwrap_or("channel_id not found".to_string());
+    // let channel_id = env::var("discord_channel_id").unwrap_or("channel_id not found".to_string());
 
     let bot = ProvidedBot::new(&discord_token);
     let commands_registered = env::var("COMMANDS_REGISTERED").unwrap_or("false".to_string());
@@ -63,9 +63,11 @@ pub async fn on_deploy() {
 
     bot.listen_to_messages().await;
 
-    let channel_id = channel_id.parse::<u64>().unwrap();
-    bot.listen_to_application_commands_from_channel(channel_id)
-        .await;
+    // let channel_id = channel_id.parse::<u64>().unwrap();
+    bot.listen_to_application_commands().await;
+    // let channel_id_bot = 1148605499797950474;
+    // bot.listen_to_application_commands_from_channel(channel_id_bot)
+    //     .await;
 }
 
 #[message_handler]
@@ -168,9 +170,9 @@ async fn handle(msg: Message) {
 #[application_command_handler]
 async fn handler(ac: ApplicationCommandInteraction) {
     let token = env::var("discord_token").unwrap();
-    let channel_id = env::var("discord_channel_id").unwrap_or("channel_id not found".to_string());
+    // let channel_id = env::var("discord_channel_id").unwrap_or("channel_id not found".to_string());
 
-    let channel_id = channel_id.parse::<u64>().unwrap();
+    // let channel_id = channel_id.parse::<u64>().unwrap();
     let _bot = ProvidedBot::new(&token);
     let client = _bot.get_client();
     client.set_application_id(ac.application_id.into());
@@ -266,9 +268,13 @@ async fn process_attachments(msg: &Message, client: &Http) -> String {
                     if res.status_code().is_success() {
                         let content = String::from_utf8_lossy(&writer);
 
-                        slack_flows::send_message_to_channel("ik8", "general", format!("{:?}", content.clone()))
+                        slack_flows::send_message_to_channel(
+                            "ik8",
+                            "general",
+                            format!("{:?}", content.clone()),
+                        )
                         .await;
-                         question.push_str(&content);
+                        question.push_str(&content);
                     }
                 }
                 Err(_) => {
@@ -419,7 +425,7 @@ fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
 
 pub async fn register_commands(discord_token: &str) -> bool {
     let bot_id = env::var("bot_id").unwrap_or("1140749575309758514".to_string());
-    let guild_id = env::var("discord_server").unwrap_or("1126690101288775740".to_string());
+    // let guild_id = env::var("discord_server").unwrap_or("1126690101288775740".to_string());
 
     let commands = json!([
         {
@@ -459,13 +465,13 @@ pub async fn register_commands(discord_token: &str) -> bool {
         }
     ]);
 
-    let guild_id = guild_id.parse::<u64>().unwrap_or(1128056245765558364);
+    // let guild_id = guild_id.parse::<u64>().unwrap_or(1128056245765558364);
     let http_client = HttpBuilder::new(discord_token)
         .application_id(bot_id.parse().unwrap())
         .build();
 
     match http_client
-        .create_guild_application_commands(guild_id, &commands)
+        .create_global_application_commands(&commands)
         .await
     {
         Ok(_) => {
