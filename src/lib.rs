@@ -48,26 +48,13 @@ pub async fn on_deploy() {
     dotenv().ok();
     logger::init();
     let discord_token = env::var("discord_token").unwrap();
-    // let channel_id = env::var("discord_channel_id").unwrap_or("channel_id not found".to_string());
+    let bot_id = env::var("bot_id").unwrap();
 
     let bot = ProvidedBot::new(&discord_token);
-    let commands_registered = env::var("COMMANDS_REGISTERED").unwrap_or("false".to_string());
 
-    match commands_registered.as_str() {
-        "false" => {
-            register_commands(&discord_token).await;
-            env::set_var("COMMANDS_REGISTERED", "true");
-        }
-        _ => {}
-    }
-
+    _ = register_commands(&discord_token, &bot_id).await;
     bot.listen_to_messages().await;
-
-    // let channel_id = channel_id.parse::<u64>().unwrap();
     bot.listen_to_application_commands().await;
-    // let channel_id_bot = 1148605499797950474;
-    // bot.listen_to_application_commands_from_channel(channel_id_bot)
-    //     .await;
 }
 
 #[message_handler]
@@ -107,19 +94,20 @@ async fn handle(msg: Message) {
 
         match msg.attachments.len() {
             0 => {
-                let clean_input = msg
-                    .content
-                    .chars()
-                    .skip_while(|&c| c != ' ')
-                    .skip(1)
-                    .collect::<String>();
+                let clean_input = if msg.content.starts_with("@") {
+                    msg.content
+                        .chars()
+                        .skip_while(|&c| c != ' ')
+                        .skip(1)
+                        .collect::<String>()
+                } else {
+                    msg.content.to_owned()
+                };
                 question = clean_input.clone();
                 if key.as_str() == "summarize" {
                     let possible_url = clean_input.trim().to_string();
 
                     if let Ok(u) = http_req::uri::Uri::try_from(possible_url.as_str()) {
-                        slack_flows::send_message_to_channel("ik8", "ch_out", possible_url.clone())
-                            .await;
                         match get_page_text(&possible_url).await {
                             Ok(text) => {
                                 question = if text.len() > 36_000 {
@@ -170,9 +158,7 @@ async fn handle(msg: Message) {
 #[application_command_handler]
 async fn handler(ac: ApplicationCommandInteraction) {
     let token = env::var("discord_token").unwrap();
-    // let channel_id = env::var("discord_channel_id").unwrap_or("channel_id not found".to_string());
 
-    // let channel_id = channel_id.parse::<u64>().unwrap();
     let _bot = ProvidedBot::new(&token);
     let client = _bot.get_client();
     client.set_application_id(ac.application_id.into());
@@ -185,11 +171,7 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         .create_interaction_response(
             ac.id.into(),
             &ac.token,
-            &(json!(
-                {
-                    "type": InteractionResponseType::DeferredChannelMessageWithSource as u8,
-
-                }
+            &(json!({"type": InteractionResponseType::DeferredChannelMessageWithSource as u8}
             )),
         )
         .await;
@@ -219,7 +201,6 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         }
         "translate" => {
             set_current_prompt_key("translate");
-
             msg = "I'm ready to translate";
         }
         "reply_tweet" => {
@@ -254,9 +235,6 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
 
 async fn process_attachments(msg: &Message, client: &Http) -> String {
     let attachments = get_attachments((*msg.attachments).to_vec());
-    slack_flows::send_message_to_channel("ik8", "general", format!("{:?}", attachments.clone()))
-        .await;
-
     let mut question = String::new();
     let mut writer = Vec::new();
 
@@ -267,13 +245,6 @@ async fn process_attachments(msg: &Message, client: &Http) -> String {
                 Ok(res) => {
                     if res.status_code().is_success() {
                         let content = String::from_utf8_lossy(&writer);
-
-                        slack_flows::send_message_to_channel(
-                            "ik8",
-                            "general",
-                            format!("{:?}", content.clone()),
-                        )
-                        .await;
                         question.push_str(&content);
                     }
                 }
@@ -306,19 +277,9 @@ async fn process_attachments(msg: &Message, client: &Http) -> String {
                 }
                 Err(e) => {
                     log::debug!("The input image does not contain text: {}", e);
-                    // _ = client
-                    // .send_message(
-                    //     msg.channel_id.into(),
-                    //     &json!({
-                    //         "content": "Sorry, the input image does not contain text. Can you try again"
-                    //     }),
-                    // )
-                    // .await;
                     continue;
                 }
             };
-            slack_flows::send_message_to_channel("ik8", "ch_err", detected.to_string()).await;
-
             question.push_str(&detected);
         }
         question.push_str("\n");
@@ -397,16 +358,6 @@ async fn process_input(system_prompt: &str, question: &str, restart: bool) -> Op
     }
 }
 
-// fn get_image_urls(attachments: Vec<Attachment>) -> Vec<String> {
-//     attachments
-//         .iter()
-//         .filter_map(|a| match a.content_type.as_ref() {
-//             Some(ct) if ct.starts_with("image") => Some(a.url.clone()),
-//             _ => None,
-//         })
-//         .collect()
-// }
-
 fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
     let mut subs = Vec::with_capacity(string.len() / sub_len);
     let mut iter = string.chars();
@@ -423,10 +374,7 @@ fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
     subs
 }
 
-pub async fn register_commands(discord_token: &str) -> bool {
-    let bot_id = env::var("bot_id").unwrap_or("1140749575309758514".to_string());
-    // let guild_id = env::var("discord_server").unwrap_or("1126690101288775740".to_string());
-
+pub async fn register_commands(discord_token: &str, bot_id: &str) -> bool {
     let commands = json!([
         {
             "name": "help",
@@ -465,7 +413,6 @@ pub async fn register_commands(discord_token: &str) -> bool {
         }
     ]);
 
-    // let guild_id = guild_id.parse::<u64>().unwrap_or(1128056245765558364);
     let http_client = HttpBuilder::new(discord_token)
         .application_id(bot_id.parse().unwrap())
         .build();
@@ -513,8 +460,8 @@ pub fn prompt_checking() -> Option<(String, String, bool)> {
     let previous_prompt_key =
         store::get("previous_prompt_key").and_then(|v| v.as_str().map(String::from));
     let mut restart = true;
-    let mut system_prompt = String::new();
-    let mut prompt_key = String::new();
+    let system_prompt;
+    let prompt_key;
     match (
         current_prompt_key.as_deref(),
         previous_prompt_key.as_deref(),
