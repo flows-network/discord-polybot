@@ -23,7 +23,7 @@ pub async fn chat_inner_async(
     model: &str
 ) -> anyhow::Result<String> {
     use reqwest::header::{ HeaderValue, CONTENT_TYPE, USER_AGENT };
-    let token = env::var("DEEP_API_KEY").expect("DEEP_API_KEY must be set");
+    let token = env::var("DEEP_API_KEY").expect("DEEP_API_KEY-must-be-set");
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(USER_AGENT, HeaderValue::from_static("MyClient/1.0.0"));
@@ -54,7 +54,7 @@ pub async fn chat_inner_async(
         Ok(chat) =>
             match chat.choices[0].message.clone().content {
                 Some(res) => {
-                    // log::info!("{:?}", chat.choices[0].message.clone());
+                    log::info!("{:?}", res.clone());
                     Ok(res)
                 }
                 None => Err(anyhow::anyhow!("Failed to get reply from OpenAI")),
