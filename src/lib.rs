@@ -1,44 +1,63 @@
-use base64::{engine::general_purpose, Engine};
+pub mod llm;
+use llm::chat_inner_async;
+use base64::{ engine::general_purpose, Engine };
 use cloud_vision_flows::text_detection;
 use discord_flows::{
     application_command_handler,
-    http::{Http, HttpBuilder},
+    http::{ Http, HttpBuilder },
     message_handler,
     model::{
         application::interaction::InteractionResponseType,
         prelude::application::interaction::application_command::ApplicationCommandInteraction,
-        Attachment, Message,
+        Attachment,
+        Message,
     },
-    Bot, ProvidedBot,
+    Bot,
+    ProvidedBot,
 };
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
 use once_cell::sync::Lazy;
-use openai_flows::{
-    chat::{ChatModel, ChatOptions},
-    OpenAIFlows,
-};
-use serde_json::{json, Value};
+use serde_json::{ json, Value };
 use std::collections::HashMap;
-use std::{env, str};
+use std::{ env, str };
 use store::Expire;
 use store_flows as store;
 use web_scraper_flows::get_page_text;
 
 static PROMPTS: Lazy<HashMap<&'static str, Value>> = Lazy::new(|| {
     let mut map = HashMap::new();
+    map.insert("start", json!("You are a helpful assistant answering questions on Discord."));
     map.insert(
-        "start",
-        json!("You are a helpful assistant answering questions on Discord."),
+        "summarize",
+        json!(
+            "You are a helpful assistant trained to summarize text in short bullet points. Please always answer in English even if the original text is not in English. Be prepared that you might be asked questions related to the content you summarize."
+        )
     );
-    map.insert("summarize", json!("You are a helpful assistant trained to summarize text in short bullet points. Please always answer in English even if the original text is not in English. Be prepared that you might be asked questions related to the content you summarize."
-));
-    map.insert("code", json!("You are an experienced software developer trained to review computer source code, explain what it does, identify potential problems, and suggest improvements. Please always answer in English. Be prepared that you might be asked follow-up questions related to the source code."
-));
-    map.insert("medical", json!("You are a medical doctor trained to read and summarize lab reports. The text you receive will contain medical lab results. Please analyze them and present the major findings as short bullet points, followed by a one-sentence summary about the subject's health status. All answers should be in English. Be prepared to answer follow-up questions related to the lab report."
-));
-    map.insert("translate", json!("You are an English language translator. For every message you receive, please translate it to English. Please respond with just the English translation and nothing more. If the input message is already in English, please fix any grammar errors and improve the writing."));
-    map.insert("reply_tweet", json!("You are a social media marketing expert. You will receive the text from a tweet. Please generate 3 clever replies to it. Then follow user suggestions to improve the reply tweets."));
+    map.insert(
+        "code",
+        json!(
+            "You are an experienced software developer trained to review computer source code, explain what it does, identify potential problems, and suggest improvements. Please always answer in English. Be prepared that you might be asked follow-up questions related to the source code."
+        )
+    );
+    map.insert(
+        "medical",
+        json!(
+            "You are a medical doctor trained to read and summarize lab reports. The text you receive will contain medical lab results. Please analyze them and present the major findings as short bullet points, followed by a one-sentence summary about the subject's health status. All answers should be in English. Be prepared to answer follow-up questions related to the lab report."
+        )
+    );
+    map.insert(
+        "translate",
+        json!(
+            "You are an English language translator. For every message you receive, please translate it to English. Please respond with just the English translation and nothing more. If the input message is already in English, please fix any grammar errors and improve the writing."
+        )
+    );
+    map.insert(
+        "reply_tweet",
+        json!(
+            "You are a social media marketing expert. You will receive the text from a tweet. Please generate 3 clever replies to it. Then follow user suggestions to improve the reply tweets."
+        )
+    );
     map
 });
 
@@ -114,7 +133,7 @@ async fn handle(msg: Message) {
                                     text.chars().take(36_000).collect::<String>()
                                 } else {
                                     text.clone()
-                                }
+                                };
                             }
                             Err(_e) => {}
                         };
@@ -124,31 +143,27 @@ async fn handle(msg: Message) {
             _ => {
                 question = process_attachments(&msg, &client).await;
             }
-        };
+        }
 
         if let Some(res) = process_input(&system_prompt, &question, restart).await {
             let resps = sub_strings(&res, 1800);
             let content = &format!("Answer: {} ", resps[0]);
-            _ = client
-                .send_message(
-                    msg.channel_id.into(),
-                    &json!({
+            _ = client.send_message(
+                msg.channel_id.into(),
+                &json!({
                       "content": content
-                    }),
-                )
-                .await;
+                    })
+            ).await;
 
             if resps.len() > 1 {
                 for resp in resps.iter().skip(1) {
                     let content = &format!("Answer: {}", resp);
-                    _ = client
-                        .send_message(
-                            msg.channel_id.into(),
-                            &json!({
+                    _ = client.send_message(
+                        msg.channel_id.into(),
+                        &json!({
                               "content": content
-                            }),
-                        )
-                        .await;
+                            })
+                    ).await;
                 }
             }
         }
@@ -167,17 +182,19 @@ async fn handler(ac: ApplicationCommandInteraction) {
 }
 
 async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
-    _ = client
-        .create_interaction_response(
-            ac.id.into(),
-            &ac.token,
-            &(json!({"type": InteractionResponseType::DeferredChannelMessageWithSource as u8}
-            )),
-        )
-        .await;
+    _ = client.create_interaction_response(
+        ac.id.into(),
+        &ac.token,
+        &json!({"type": InteractionResponseType::DeferredChannelMessageWithSource as u8}
+            )
+    ).await;
 
     let mut msg = "";
-    let help_msg = env::var("help_msg").unwrap_or("You can enter text or upload an image with text to chat with this bot. The bot can take several different assistant roles. Type command /qa or /translate or /summarize or /medical or /code or /reply_tweet to start.".to_string());
+    let help_msg = env
+        ::var("help_msg")
+        .unwrap_or(
+            "You can enter text or upload an image with text to chat with this bot. The bot can take several different assistant roles. Type command /qa or /translate or /summarize or /medical or /code or /reply_tweet to start.".to_string()
+        );
 
     match ac.data.name.as_str() {
         "help" => {
@@ -213,21 +230,19 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         }
         _ => {}
     }
-    _ = client
-        .edit_original_interaction_response(
-            &ac.token,
-            &(json!(
+    _ = client.edit_original_interaction_response(
+        &ac.token,
+        &json!(
                 { "content": msg }
-            )),
-        )
-        .await;
+            )
+    ).await;
     store::set(
         "previous_prompt_key",
         json!(String::new()),
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 1,
-        }),
+        })
     );
 
     return;
@@ -258,14 +273,12 @@ async fn process_attachments(msg: &Message, client: &Http) -> String {
                 Ok(b) => b,
                 Err(e) => {
                     log::warn!("{}", e);
-                    _ = client
-                    .send_message(
+                    _ = client.send_message(
                         msg.channel_id.into(),
                         &json!({
                             "content": "There is a problem with the uploaded file. Can you try again?"
-                        }),
-                    )
-                    .await;
+                        })
+                    ).await;
                     continue;
                 }
             };
@@ -292,11 +305,7 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
     let res = attachments
         .iter()
         .filter_map(|a| {
-            typ = a
-                .content_type
-                .as_deref()
-                .unwrap_or("no file type")
-                .to_string();
+            typ = a.content_type.as_deref().unwrap_or("no file type").to_string();
             if let Some(ct) = a.content_type.as_ref() {
                 if ct.starts_with("image") {
                     return Some((a.url.clone(), false));
@@ -323,11 +332,13 @@ fn download_image(url: String) -> Result<String, String> {
             if r.status_code().is_success() {
                 Ok(general_purpose::STANDARD.encode(writer))
             } else {
-                Err(format!(
-                    "response failed: {}, body: {}",
-                    r.reason(),
-                    String::from_utf8_lossy(&writer)
-                ))
+                Err(
+                    format!(
+                        "response failed: {}, body: {}",
+                        r.reason(),
+                        String::from_utf8_lossy(&writer)
+                    )
+                )
             }
         }
         Err(e) => Err(e.to_string()),
@@ -335,22 +346,17 @@ fn download_image(url: String) -> Result<String, String> {
 }
 
 async fn process_input(system_prompt: &str, question: &str, restart: bool) -> Option<String> {
-    let mut openai = OpenAIFlows::new();
-    openai.set_retry_times(2);
 
-    let co = ChatOptions {
-        // model: ChatModel::GPT4,
-        model: ChatModel::GPT35Turbo16K,
-        restart: restart,
-        system_prompt: Some(system_prompt),
-        ..Default::default()
-    };
+    // let co = ChatOptions {
+    //     // model: ChatModel::GPT4,
+    //     model: ChatModel::GPT35Turbo16K,
+    //     restart: restart,
+    //     system_prompt: Some(system_prompt),
+    //     ..Default::default()
+    // };
 
-    match openai
-        .chat_completion(&format!("bot-generation"), &question, &co)
-        .await
-    {
-        Ok(r) => Some(r.choice),
+    match chat_inner_async(&system_prompt, &question, 512, "llama2-chat-7b").await {
+        Ok(r) => Some(r),
         Err(e) => {
             log::error!("OpenAI returns error: {}", e);
             None
@@ -375,7 +381,8 @@ fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
 }
 
 pub async fn register_commands(discord_token: &str, bot_id: &str) -> bool {
-    let commands = json!([
+    let commands =
+        json!([
         {
             "name": "help",
             "description": "Display help message"
@@ -417,10 +424,7 @@ pub async fn register_commands(discord_token: &str, bot_id: &str) -> bool {
         .application_id(bot_id.parse().unwrap())
         .build();
 
-    match http_client
-        .create_global_application_commands(&commands)
-        .await
-    {
+    match http_client.create_global_application_commands(&commands).await {
         Ok(_) => {
             log::info!("Successfully registered command");
             true
@@ -439,7 +443,7 @@ pub fn set_previous_prompt_key(key: &str) {
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 300,
-        }),
+        })
     );
 }
 
@@ -450,22 +454,21 @@ pub fn set_current_prompt_key(key: &str) {
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 60,
-        }),
+        })
     );
 }
 
 pub fn prompt_checking() -> Option<(String, String, bool)> {
-    let current_prompt_key =
-        store::get("current_prompt_key").and_then(|v| v.as_str().map(String::from));
-    let previous_prompt_key =
-        store::get("previous_prompt_key").and_then(|v| v.as_str().map(String::from));
+    let current_prompt_key = store
+        ::get("current_prompt_key")
+        .and_then(|v| v.as_str().map(String::from));
+    let previous_prompt_key = store
+        ::get("previous_prompt_key")
+        .and_then(|v| v.as_str().map(String::from));
     let mut restart = true;
     let system_prompt;
     let prompt_key;
-    match (
-        current_prompt_key.as_deref(),
-        previous_prompt_key.as_deref(),
-    ) {
+    match (current_prompt_key.as_deref(), previous_prompt_key.as_deref()) {
         (Some(cur), may_exist) => {
             if let Some(prv) = may_exist {
                 if cur == prv {
@@ -489,7 +492,9 @@ pub fn prompt_checking() -> Option<(String, String, bool)> {
 
             set_previous_prompt_key(prv);
         }
-        (None, None) => return None,
+        (None, None) => {
+            return None;
+        }
     }
 
     Some((prompt_key, system_prompt, restart))
