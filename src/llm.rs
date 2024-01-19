@@ -23,7 +23,7 @@ pub async fn chat_inner_async(
     model: &str
 ) -> anyhow::Result<String> {
     use reqwest::header::{ HeaderValue, CONTENT_TYPE, USER_AGENT };
-    let token = env::var("DEEP_API_KEY").expect("DEEP_API_KEY-must-be-set");
+    let token = env::var("DEEP_API_KEY").unwrap_or(String::from("DEEP_API_KEY-must-be-set"));
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(USER_AGENT, HeaderValue::from_static("MyClient/1.0.0"));
