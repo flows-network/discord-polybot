@@ -72,7 +72,7 @@ pub async fn on_deploy() {
 
     let bot = ProvidedBot::new(&discord_token);
 
-    _ = register_commands(&discord_token, &bot_id).await;
+    // _ = register_commands(&discord_token, &bot_id).await;
     bot.listen_to_messages().await;
     bot.listen_to_application_commands().await;
 }
