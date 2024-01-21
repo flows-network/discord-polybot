@@ -1,33 +1,34 @@
 pub mod llm;
-use llm::chat_inner_async;
-use base64::{ engine::general_purpose, Engine };
+use base64::{engine::general_purpose, Engine};
 use cloud_vision_flows::text_detection;
 use discord_flows::{
     application_command_handler,
-    http::{ Http, HttpBuilder },
+    http::{Http, HttpBuilder},
     message_handler,
     model::{
         application::interaction::InteractionResponseType,
         prelude::application::interaction::application_command::ApplicationCommandInteraction,
-        Attachment,
-        Message,
+        Attachment, Message,
     },
-    Bot,
-    ProvidedBot,
+    Bot, ProvidedBot,
 };
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
+use llm::chat_inner_async;
 use once_cell::sync::Lazy;
-use serde_json::{ json, Value };
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::{ env, str };
+use std::{env, str};
 use store::Expire;
 use store_flows as store;
 use web_scraper_flows::get_page_text;
 
 static PROMPTS: Lazy<HashMap<&'static str, Value>> = Lazy::new(|| {
     let mut map = HashMap::new();
-    map.insert("start", json!("You are a helpful assistant answering questions on Discord."));
+    map.insert(
+        "start",
+        json!("You are a helpful assistant answering questions on Discord."),
+    );
     map.insert(
         "summarize",
         json!(
@@ -146,24 +147,29 @@ async fn handle(msg: Message) {
         }
 
         if let Some(res) = process_input(&system_prompt, &question, restart).await {
+            log::info!("Answer: {}", res.clone());
             let resps = sub_strings(&res, 1800);
             let content = &format!("Answer: {} ", resps[0]);
-            _ = client.send_message(
-                msg.channel_id.into(),
-                &json!({
+            _ = client
+                .send_message(
+                    msg.channel_id.into(),
+                    &json!({
                       "content": content
-                    })
-            ).await;
+                    }),
+                )
+                .await;
 
             if resps.len() > 1 {
                 for resp in resps.iter().skip(1) {
                     let content = &format!("Answer: {}", resp);
-                    _ = client.send_message(
-                        msg.channel_id.into(),
-                        &json!({
+                    _ = client
+                        .send_message(
+                            msg.channel_id.into(),
+                            &json!({
                               "content": content
-                            })
-                    ).await;
+                            }),
+                        )
+                        .await;
                 }
             }
         }
@@ -182,12 +188,14 @@ async fn handler(ac: ApplicationCommandInteraction) {
 }
 
 async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
-    _ = client.create_interaction_response(
-        ac.id.into(),
-        &ac.token,
-        &json!({"type": InteractionResponseType::DeferredChannelMessageWithSource as u8}
-            )
-    ).await;
+    _ = client
+        .create_interaction_response(
+            ac.id.into(),
+            &ac.token,
+            &json!({"type": InteractionResponseType::DeferredChannelMessageWithSource as u8}
+            ),
+        )
+        .await;
 
     let mut msg = "";
     let help_msg = env
@@ -230,19 +238,21 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         }
         _ => {}
     }
-    _ = client.edit_original_interaction_response(
-        &ac.token,
-        &json!(
+    _ = client
+        .edit_original_interaction_response(
+            &ac.token,
+            &json!(
                 { "content": msg }
-            )
-    ).await;
+            ),
+        )
+        .await;
     store::set(
         "previous_prompt_key",
         json!(String::new()),
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 1,
-        })
+        }),
     );
 
     return;
@@ -305,7 +315,11 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
     let res = attachments
         .iter()
         .filter_map(|a| {
-            typ = a.content_type.as_deref().unwrap_or("no file type").to_string();
+            typ = a
+                .content_type
+                .as_deref()
+                .unwrap_or("no file type")
+                .to_string();
             if let Some(ct) = a.content_type.as_ref() {
                 if ct.starts_with("image") {
                     return Some((a.url.clone(), false));
@@ -332,13 +346,11 @@ fn download_image(url: String) -> Result<String, String> {
             if r.status_code().is_success() {
                 Ok(general_purpose::STANDARD.encode(writer))
             } else {
-                Err(
-                    format!(
-                        "response failed: {}, body: {}",
-                        r.reason(),
-                        String::from_utf8_lossy(&writer)
-                    )
-                )
+                Err(format!(
+                    "response failed: {}, body: {}",
+                    r.reason(),
+                    String::from_utf8_lossy(&writer)
+                ))
             }
         }
         Err(e) => Err(e.to_string()),
@@ -346,7 +358,6 @@ fn download_image(url: String) -> Result<String, String> {
 }
 
 async fn process_input(system_prompt: &str, question: &str, restart: bool) -> Option<String> {
-
     // let co = ChatOptions {
     //     // model: ChatModel::GPT4,
     //     model: ChatModel::GPT35Turbo16K,
@@ -354,7 +365,7 @@ async fn process_input(system_prompt: &str, question: &str, restart: bool) -> Op
     //     system_prompt: Some(system_prompt),
     //     ..Default::default()
     // };
-
+log::info!("question: {}", question.clone());
     match chat_inner_async(&system_prompt, &question, 512, "llama2-chat-7b").await {
         Ok(r) => Some(r),
         Err(e) => {
@@ -381,8 +392,7 @@ fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
 }
 
 pub async fn register_commands(discord_token: &str, bot_id: &str) -> bool {
-    let commands =
-        json!([
+    let commands = json!([
         {
             "name": "help",
             "description": "Display help message"
@@ -424,7 +434,10 @@ pub async fn register_commands(discord_token: &str, bot_id: &str) -> bool {
         .application_id(bot_id.parse().unwrap())
         .build();
 
-    match http_client.create_global_application_commands(&commands).await {
+    match http_client
+        .create_global_application_commands(&commands)
+        .await
+    {
         Ok(_) => {
             log::info!("Successfully registered command");
             true
@@ -443,7 +456,7 @@ pub fn set_previous_prompt_key(key: &str) {
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 300,
-        })
+        }),
     );
 }
 
@@ -454,21 +467,22 @@ pub fn set_current_prompt_key(key: &str) {
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 60,
-        })
+        }),
     );
 }
 
 pub fn prompt_checking() -> Option<(String, String, bool)> {
-    let current_prompt_key = store
-        ::get("current_prompt_key")
-        .and_then(|v| v.as_str().map(String::from));
-    let previous_prompt_key = store
-        ::get("previous_prompt_key")
-        .and_then(|v| v.as_str().map(String::from));
+    let current_prompt_key =
+        store::get("current_prompt_key").and_then(|v| v.as_str().map(String::from));
+    let previous_prompt_key =
+        store::get("previous_prompt_key").and_then(|v| v.as_str().map(String::from));
     let mut restart = true;
     let system_prompt;
     let prompt_key;
-    match (current_prompt_key.as_deref(), previous_prompt_key.as_deref()) {
+    match (
+        current_prompt_key.as_deref(),
+        previous_prompt_key.as_deref(),
+    ) {
         (Some(cur), may_exist) => {
             if let Some(prv) = may_exist {
                 if cur == prv {

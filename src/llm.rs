@@ -1,3 +1,4 @@
+use anyhow;
 use async_openai::{
     config::Config,
     types::{
@@ -14,15 +15,14 @@ use reqwest::header::HeaderMap;
 use secrecy::Secret;
 use std::collections::HashMap;
 use std::env;
-use anyhow;
 
 pub async fn chat_inner_async(
     system_prompt: &str,
     user_input: &str,
     max_token: u16,
-    model: &str
+    model: &str,
 ) -> anyhow::Result<String> {
-    use reqwest::header::{ HeaderValue, CONTENT_TYPE, USER_AGENT };
+    use reqwest::header::{HeaderValue, CONTENT_TYPE, USER_AGENT};
     let token = env::var("DEEP_API_KEY").unwrap_or(String::from("DEEP_API_KEY-must-be-set"));
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
@@ -42,7 +42,10 @@ pub async fn chat_inner_async(
             .build()
             .expect("Failed to build system message")
             .into(),
-        ChatCompletionRequestUserMessageArgs::default().content(user_input).build()?.into()
+        ChatCompletionRequestUserMessageArgs::default()
+            .content(user_input)
+            .build()?
+            .into(),
     ];
     let request = CreateChatCompletionRequestArgs::default()
         .max_tokens(max_token)
@@ -51,14 +54,13 @@ pub async fn chat_inner_async(
         .build()?;
 
     match client.chat().create(request).await {
-        Ok(chat) =>
-            match chat.choices[0].message.clone().content {
-                Some(res) => {
-                    log::info!("{:?}", res.clone());
-                    Ok(res)
-                }
-                None => Err(anyhow::anyhow!("Failed to get reply from OpenAI")),
+        Ok(chat) => match chat.choices[0].message.clone().content {
+            Some(res) => {
+                log::info!("{:?}", res.clone());
+                Ok(res)
             }
+            None => Err(anyhow::anyhow!("Failed to get reply from OpenAI")),
+        },
         Err(_e) => {
             log::error!("Error getting response from hosted LLM: {:?}", _e);
             Err(anyhow::anyhow!(_e))
