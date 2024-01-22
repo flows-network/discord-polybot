@@ -1,34 +1,45 @@
 pub mod llm;
-use base64::{engine::general_purpose, Engine};
+use async_openai::{
+    types::{
+        // ChatCompletionFunctionsArgs, ChatCompletionRequestMessage,
+        ChatCompletionRequestSystemMessageArgs,
+        ChatCompletionRequestUserMessageArgs,
+        // FinishReason,
+    },
+    Client as OpenAIClient,
+};
+use base64::{ engine::general_purpose, Engine };
 use cloud_vision_flows::text_detection;
 use discord_flows::{
     application_command_handler,
-    http::{Http, HttpBuilder},
+    http::{ Http, HttpBuilder },
     message_handler,
     model::{
         application::interaction::InteractionResponseType,
         prelude::application::interaction::application_command::ApplicationCommandInteraction,
-        Attachment, Message,
+        Attachment,
+        Message,
     },
-    Bot, ProvidedBot,
+    Bot,
+    ProvidedBot,
 };
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
-use llm::chat_inner_async;
 use once_cell::sync::Lazy;
-use serde_json::{json, Value};
+use reqwest::header::HeaderMap;
+use secrecy::Secret;
+use serde_json::{ json, Value };
 use std::collections::HashMap;
-use std::{env, str};
+use std::{ env, str };
 use store::Expire;
 use store_flows as store;
 use web_scraper_flows::get_page_text;
 
+use crate::llm::*;
+
 static PROMPTS: Lazy<HashMap<&'static str, Value>> = Lazy::new(|| {
     let mut map = HashMap::new();
-    map.insert(
-        "start",
-        json!("You are a helpful assistant answering questions on Discord."),
-    );
+    map.insert("start", json!("You are a helpful assistant answering questions on Discord."));
     map.insert(
         "summarize",
         json!(
@@ -68,11 +79,11 @@ pub async fn on_deploy() {
     dotenv().ok();
     logger::init();
     let discord_token = env::var("discord_token").unwrap();
-    let bot_id = env::var("bot_id").unwrap();
+    let _bot_id = env::var("bot_id").unwrap();
 
     let bot = ProvidedBot::new(&discord_token);
 
-    // _ = register_commands(&discord_token, &bot_id).await;
+    _ = register_commands(&discord_token, &_bot_id).await;
     bot.listen_to_messages().await;
     bot.listen_to_application_commands().await;
 }
@@ -109,6 +120,9 @@ async fn handle(msg: Message) {
         return;
     }
 
+    let llm_client: OpenAIClient<LocalServiceProviderConfig> = create_llm_client();
+    let mut messages = Vec::new();
+
     if let Some((key, system_prompt, restart)) = prompt_checking() {
         let mut question = String::new();
 
@@ -130,11 +144,7 @@ async fn handle(msg: Message) {
                     if let Ok(u) = http_req::uri::Uri::try_from(possible_url.as_str()) {
                         match get_page_text(&possible_url).await {
                             Ok(text) => {
-                                question = if text.len() > 36_000 {
-                                    text.chars().take(36_000).collect::<String>()
-                                } else {
-                                    text.clone()
-                                };
+                                question = text.chars().take(36_000).collect::<String>();
                             }
                             Err(_e) => {}
                         };
@@ -146,31 +156,45 @@ async fn handle(msg: Message) {
             }
         }
 
-        if let Some(res) = process_input(&system_prompt, &question, restart).await {
-            log::info!("Answer: {}", res.clone());
-            let resps = sub_strings(&res, 1800);
-            let content = &format!("Answer: {} ", resps[0]);
-            _ = client
-                .send_message(
+        let system_message = ChatCompletionRequestSystemMessageArgs::default()
+            .content(system_prompt)
+            .build()
+            .expect("Failed to build system message")
+            .into();
+        let user_message = ChatCompletionRequestUserMessageArgs::default()
+            .content(question)
+            .build()
+            .expect("Failed to build user message")
+            .into();
+
+        if restart {
+            messages = vec![system_message, user_message];
+        } else {
+            messages.push(user_message);
+        }
+        let _res = chat_rounds_n(llm_client, &mut messages, 512, "model").await.expect(
+            "Failed to chat"
+        );
+
+        log::info!("Answer: {}", _res.clone());
+        let resps = sub_strings(&_res, 1800);
+        let content = &format!("Answer: {} ", resps[0]);
+        _ = client.send_message(
+            msg.channel_id.into(),
+            &json!({
+                  "content": content
+                })
+        ).await;
+
+        if resps.len() > 1 {
+            for resp in resps.iter().skip(1) {
+                let content = &format!("Answer: {}", resp);
+                _ = client.send_message(
                     msg.channel_id.into(),
                     &json!({
-                      "content": content
-                    }),
-                )
-                .await;
-
-            if resps.len() > 1 {
-                for resp in resps.iter().skip(1) {
-                    let content = &format!("Answer: {}", resp);
-                    _ = client
-                        .send_message(
-                            msg.channel_id.into(),
-                            &json!({
-                              "content": content
-                            }),
-                        )
-                        .await;
-                }
+                          "content": content
+                        })
+                ).await;
             }
         }
     }
@@ -188,14 +212,12 @@ async fn handler(ac: ApplicationCommandInteraction) {
 }
 
 async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
-    _ = client
-        .create_interaction_response(
-            ac.id.into(),
-            &ac.token,
-            &json!({"type": InteractionResponseType::DeferredChannelMessageWithSource as u8}
-            ),
-        )
-        .await;
+    _ = client.create_interaction_response(
+        ac.id.into(),
+        &ac.token,
+        &json!({"type": InteractionResponseType::DeferredChannelMessageWithSource as u8}
+            )
+    ).await;
 
     let mut msg = "";
     let help_msg = env
@@ -238,24 +260,20 @@ async fn handle_command(client: Http, ac: ApplicationCommandInteraction) {
         }
         _ => {}
     }
-    _ = client
-        .edit_original_interaction_response(
-            &ac.token,
-            &json!(
+    _ = client.edit_original_interaction_response(
+        &ac.token,
+        &json!(
                 { "content": msg }
-            ),
-        )
-        .await;
+            )
+    ).await;
     store::set(
         "previous_prompt_key",
         json!(String::new()),
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 1,
-        }),
+        })
     );
-
-    return;
 }
 
 async fn process_attachments(msg: &Message, client: &Http) -> String {
@@ -305,9 +323,9 @@ async fn process_attachments(msg: &Message, client: &Http) -> String {
             };
             question.push_str(&detected);
         }
-        question.push_str("\n");
+        question.push('\n');
     }
-    return question;
+    question
 }
 
 fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
@@ -315,11 +333,7 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
     let res = attachments
         .iter()
         .filter_map(|a| {
-            typ = a
-                .content_type
-                .as_deref()
-                .unwrap_or("no file type")
-                .to_string();
+            typ = a.content_type.as_deref().unwrap_or("no file type").to_string();
             if let Some(ct) = a.content_type.as_ref() {
                 if ct.starts_with("image") {
                     return Some((a.url.clone(), false));
@@ -334,7 +348,7 @@ fn get_attachments(attachments: Vec<Attachment>) -> Vec<(String, bool)> {
 
     log::error!("{:?}", typ);
     log::info!("{:?}", typ);
-    return res;
+    res
 }
 
 fn download_image(url: String) -> Result<String, String> {
@@ -346,32 +360,16 @@ fn download_image(url: String) -> Result<String, String> {
             if r.status_code().is_success() {
                 Ok(general_purpose::STANDARD.encode(writer))
             } else {
-                Err(format!(
-                    "response failed: {}, body: {}",
-                    r.reason(),
-                    String::from_utf8_lossy(&writer)
-                ))
+                Err(
+                    format!(
+                        "response failed: {}, body: {}",
+                        r.reason(),
+                        String::from_utf8_lossy(&writer)
+                    )
+                )
             }
         }
         Err(e) => Err(e.to_string()),
-    }
-}
-
-async fn process_input(system_prompt: &str, question: &str, restart: bool) -> Option<String> {
-    // let co = ChatOptions {
-    //     // model: ChatModel::GPT4,
-    //     model: ChatModel::GPT35Turbo16K,
-    //     restart: restart,
-    //     system_prompt: Some(system_prompt),
-    //     ..Default::default()
-    // };
-log::info!("question: {}", question.clone());
-    match chat_inner_async(&system_prompt, &question, 512, "llama2-chat-7b").await {
-        Ok(r) => Some(r),
-        Err(e) => {
-            log::error!("OpenAI returns error: {}", e);
-            None
-        }
     }
 }
 
@@ -392,7 +390,8 @@ fn sub_strings(string: &str, sub_len: usize) -> Vec<&str> {
 }
 
 pub async fn register_commands(discord_token: &str, bot_id: &str) -> bool {
-    let commands = json!([
+    let commands =
+        json!([
         {
             "name": "help",
             "description": "Display help message"
@@ -434,10 +433,7 @@ pub async fn register_commands(discord_token: &str, bot_id: &str) -> bool {
         .application_id(bot_id.parse().unwrap())
         .build();
 
-    match http_client
-        .create_global_application_commands(&commands)
-        .await
-    {
+    match http_client.create_global_application_commands(&commands).await {
         Ok(_) => {
             log::info!("Successfully registered command");
             true
@@ -456,7 +452,7 @@ pub fn set_previous_prompt_key(key: &str) {
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 300,
-        }),
+        })
     );
 }
 
@@ -467,22 +463,21 @@ pub fn set_current_prompt_key(key: &str) {
         Some(Expire {
             kind: store::ExpireKind::Ex,
             value: 60,
-        }),
+        })
     );
 }
 
 pub fn prompt_checking() -> Option<(String, String, bool)> {
-    let current_prompt_key =
-        store::get("current_prompt_key").and_then(|v| v.as_str().map(String::from));
-    let previous_prompt_key =
-        store::get("previous_prompt_key").and_then(|v| v.as_str().map(String::from));
+    let current_prompt_key = store
+        ::get("current_prompt_key")
+        .and_then(|v| v.as_str().map(String::from));
+    let previous_prompt_key = store
+        ::get("previous_prompt_key")
+        .and_then(|v| v.as_str().map(String::from));
     let mut restart = true;
     let system_prompt;
     let prompt_key;
-    match (
-        current_prompt_key.as_deref(),
-        previous_prompt_key.as_deref(),
-    ) {
+    match (current_prompt_key.as_deref(), previous_prompt_key.as_deref()) {
         (Some(cur), may_exist) => {
             if let Some(prv) = may_exist {
                 if cur == prv {
@@ -512,4 +507,47 @@ pub fn prompt_checking() -> Option<(String, String, bool)> {
     }
 
     Some((prompt_key, system_prompt, restart))
+}
+
+pub async fn prep() -> anyhow::Result<()> {
+    use reqwest::header::{ HeaderValue, CONTENT_TYPE, USER_AGENT };
+    let token = env::var("DEEP_API_KEY").unwrap_or(String::from("DEEP_API_KEY-must-be-set"));
+    let mut headers = HeaderMap::new();
+    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("MyClient/1.0.0"));
+    let config = LocalServiceProviderConfig {
+        // api_base: String::from("http://127.0.0.1:8080/v1"),
+        api_base: String::from("http://52.37.228.1:8080/v1"),
+        headers,
+        api_key: Secret::new(token),
+        query: HashMap::new(),
+    };
+    let restart = false;
+    let client = OpenAIClient::with_config(config);
+    let system_prompt =
+        "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.";
+    let system_message = ChatCompletionRequestSystemMessageArgs::default()
+        .content(system_prompt)
+        .build()
+        .expect("Failed to build system message")
+        .into();
+    let user_message = ChatCompletionRequestUserMessageArgs::default()
+        .content("user_input")
+        .build()
+        .expect("Failed to build user message")
+        .into();
+
+    let mut messages = vec![system_message, user_message];
+
+    if !restart {
+        messages.push(
+            ChatCompletionRequestUserMessageArgs::default().content("user_input").build()?.into()
+        );
+
+        let _res = chat_rounds_n(client, &mut messages, 512, "model").await?;
+    } else {
+        let _res = chat_rounds_n(client, &mut messages, 512, "model").await?;
+    }
+
+    Ok(())
 }
