@@ -4,6 +4,11 @@ This is a variant of the Discord Assistant Bot, the LLM service is provided by a
 
 This multi-purpose Discord bot offers a variety of functionalities. It can summarize text, review code, interpret medical reports, translate text to English, reply to tweets, and answer questions. It accepts both images and text as input.
 
+## Environment Variables
+
+Set `LLM_API_KEY` - the token that you've assigned to your own LLM service, and `LLM_API_BASE` (like "http://52.37.228.1:8080/v1"), the IP address at which you're providing your LLM service. Please note that you need to run your LLM service with OpenAI Chat compatibile mode.
+
+
 ## Features
 
 - **Text and Image Processing**: The bot accepts both text and images as input. 

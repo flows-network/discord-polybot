@@ -54,15 +54,16 @@ pub async fn chat_inner_async(
     model: &str
 ) -> anyhow::Result<String> {
     use reqwest::header::{ HeaderValue, CONTENT_TYPE, USER_AGENT };
-    let token = env::var("DEEP_API_KEY").unwrap_or(String::from("DEEP_API_KEY-must-be-set"));
+    let api_key = env::var("LLM_API_KEY").expect("LLM_API_KEY-must-be-set");
+    let api_base = env::var("LLM_API_BASE").unwrap_or(String::from("http://52.37.228.1:8080/v1"));
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(USER_AGENT, HeaderValue::from_static("MyClient/1.0.0"));
     let config = LocalServiceProviderConfig {
         // api_base: String::from("http://127.0.0.1:8080/v1"),
-        api_base: String::from("http://52.37.228.1:8080/v1"),
+        api_base: api_base,
         headers,
-        api_key: Secret::new(token),
+        api_key: Secret::new(api_key),
         query: HashMap::new(),
     };
 
@@ -132,15 +133,16 @@ impl OpenAIConfig for LocalServiceProviderConfig {
 
 pub fn create_llm_client() -> OpenAIClient<LocalServiceProviderConfig> {
     use reqwest::header::{ HeaderValue, CONTENT_TYPE, USER_AGENT };
-    let token = env::var("DEEP_API_KEY").unwrap_or(String::from("DEEP_API_KEY-must-be-set"));
+    let api_key = env::var("LLM_API_KEY").expect("LLM_API_KEY-must-be-set");
+    let api_base = env::var("LLM_API_BASE").unwrap_or(String::from("http://52.37.228.1:8080/v1"));
     let mut headers = HeaderMap::new();
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     headers.insert(USER_AGENT, HeaderValue::from_static("MyClient/1.0.0"));
     let config = LocalServiceProviderConfig {
         // api_base: String::from("http://127.0.0.1:8080/v1"),
-        api_base: String::from("http://52.37.228.1:8080/v1"),
+        api_base: api_base,
         headers,
-        api_key: Secret::new(token),
+        api_key: Secret::new(api_key),
         query: HashMap::new(),
     };
     OpenAIClient::with_config(config)
