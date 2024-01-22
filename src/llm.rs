@@ -150,12 +150,15 @@ pub fn chat_history(current_q: &str, restart: bool) -> Vec<String> {
     let mut chat_history: Vec<String> = if restart {
         vec![current_q.to_string()]
     } else {
-        store::get("chat_history")
-            .and_then(|v| v.as_array().map(|arr| {
-                arr.iter()
-                    .filter_map(|val| val.as_str().map(String::from))
-                    .collect()
-            }))
+        store
+            ::get("chat_history")
+            .and_then(|v|
+                v.as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|val| val.as_str().map(String::from))
+                        .collect()
+                })
+            )
             .unwrap_or_else(Vec::new)
     };
 
@@ -178,3 +181,81 @@ pub fn chat_history(current_q: &str, restart: bool) -> Vec<String> {
     chat_history
 }
 
+/* pub async fn context_manager(current_q: &str) -> anyhow::Result<Vec<String>> {
+    let mut chat_history: Vec<String> = if restart {
+        vec![current_q.to_string()]
+    } else {
+        store
+            ::get("chat_history")
+            .and_then(|v|
+                v.as_array().map(|arr| {
+                    arr.iter()
+                        .filter_map(|val| val.as_str().map(String::from))
+                        .collect()
+                })
+            )
+            .unwrap_or_else(Vec::new)
+    };
+    let system_prompt = format!(
+        r#"You are the context manager AI of a less capable team member. Your teammate engages in a multi-turn conversation with user, the user may switch topics any time, but it lacks the power to sense such changes, you task is to examine its original task, its chat history to judge whether the user has actually started a new topic, please gauage this propability and reply in JSON format, please use "Y" to indicate the probability of a topic change greater than 50%, "N" to indicate otherwise, this is its task: {bot_prompt}, following is the {chat_history}:
+    {{
+    \"topic_changed\": \"Y\"
+    }}
+    Ensure that the JSON is properly formatted, with correct escaping of special characters, and is ready to be parsed by a JSON parser that expects RFC8259-compliant JSON. Avoid adding any non-JSON content or formatting."#
+    );
+
+    if parse_topic_change_from_json(current_q).await {
+        let current_q = chat_history.pop().unwrap_or_else(|| "".to_string());
+
+        chat_history = vec![current_q.to_string()];
+    } else {
+        log::info!("Topic not changed");
+    }
+    chat_history
+} */
+
+pub async fn parse_topic_change_from_json(input: &str) -> bool {
+    use regex::Regex;
+    use serde_json::{ Value, from_str };
+    use log;
+
+    let parsed_result: Result<Value, serde_json::Error> = from_str(input);
+
+    match parsed_result {
+        Ok(parsed) => {
+            if let Some(Value::String(value)) = parsed.get("topic_changed") {
+                match value.as_str() {
+                    "Y" => {
+                        return true;
+                    }
+                    "N" => {
+                        return false;
+                    }
+                    _ => log::error!("Unexpected value for 'topic_changed'"),
+                }
+            } else {
+                log::error!("'topic_changed' key not found or not a string");
+            }
+        }
+        Err(e) => {
+            log::error!("Error parsing JSON: {:?}", e);
+
+            let re = Regex::new(r#""topic_changed":\s*"([YN])""#).expect(
+                "Failed to compile regex pattern"
+            );
+
+            if let Some(cap) = re.captures(input) {
+                match cap.get(1).map(|m| m.as_str()) {
+                    Some("Y") => {
+                        return true;
+                    }
+                    Some("N") => {
+                        return false;
+                    }
+                    _ => log::error!("No valid 'topic_changed' value found"),
+                }
+            }
+        }
+    }
+    false
+}
