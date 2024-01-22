@@ -1,4 +1,6 @@
-# Discord Assistant Bot
+# Discord Assistant Bot with self-hosted LLM
+
+This is a variant of the Discord Assistant Bot, the LLM service is provided by a self-hosted instance ran with LlamaEdge. It serves as a proof of concept for leveraging open source large language models for real world applications aiming for lower cost and greater privacy and control.
 
 This multi-purpose Discord bot offers a variety of functionalities. It can summarize text, review code, interpret medical reports, translate text to English, reply to tweets, and answer questions. It accepts both images and text as input.
 
