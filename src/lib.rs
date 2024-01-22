@@ -1,7 +1,8 @@
 pub mod llm;
 use async_openai::{
     types::{
-        // ChatCompletionFunctionsArgs, ChatCompletionRequestMessage,
+        // ChatCompletionFunctionsArgs,
+        // ChatCompletionRequestMessage,
         ChatCompletionRequestSystemMessageArgs,
         ChatCompletionRequestUserMessageArgs,
         // FinishReason,
@@ -26,8 +27,6 @@ use discord_flows::{
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
 use once_cell::sync::Lazy;
-use reqwest::header::HeaderMap;
-use secrecy::Secret;
 use serde_json::{ json, Value };
 use std::collections::HashMap;
 use std::{ env, str };
@@ -155,25 +154,27 @@ async fn handle(msg: Message) {
             }
         }
 
-        let system_message = ChatCompletionRequestSystemMessageArgs::default()
-            .content(system_prompt)
-            .build()
-            .expect("Failed to build system message")
-            .into();
-        let user_message = ChatCompletionRequestUserMessageArgs::default()
-            .content(question)
-            .build()
-            .expect("Failed to build user message")
-            .into();
+        let mut messages = vec![
+            ChatCompletionRequestSystemMessageArgs::default()
+                .content(system_prompt)
+                .build()
+                .expect("Failed to build system message")
+                .into()
+        ];
 
-        // if restart {
-        let mut  messages = vec![system_message, user_message];
-        // } else {
-        //     messages.push(user_message);
-        // }
-        let _res = chat_rounds_n(llm_client, &mut messages, 512, "model").await.expect(
-            "Failed to chat"
-        );
+        let question_history = chat_history(&question, restart);
+
+        for q in question_history.into_iter() {
+            messages.push(
+                ChatCompletionRequestUserMessageArgs::default()
+                    .content(q)
+                    .build()
+                    .expect("Failed to build user message")
+                    .into()
+            );
+        }
+
+        let _res = chat_rounds_n(llm_client, messages, 512, "model").await.expect("Failed to chat");
 
         log::info!("Answer: {}", _res.clone());
         let resps = sub_strings(&_res, 1800);
@@ -506,47 +507,4 @@ pub fn prompt_checking() -> Option<(String, String, bool)> {
     }
 
     Some((prompt_key, system_prompt, restart))
-}
-
-pub async fn prep() -> anyhow::Result<()> {
-    use reqwest::header::{ HeaderValue, CONTENT_TYPE, USER_AGENT };
-    let token = env::var("DEEP_API_KEY").unwrap_or(String::from("DEEP_API_KEY-must-be-set"));
-    let mut headers = HeaderMap::new();
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-    headers.insert(USER_AGENT, HeaderValue::from_static("MyClient/1.0.0"));
-    let config = LocalServiceProviderConfig {
-        // api_base: String::from("http://127.0.0.1:8080/v1"),
-        api_base: String::from("http://52.37.228.1:8080/v1"),
-        headers,
-        api_key: Secret::new(token),
-        query: HashMap::new(),
-    };
-    let restart = false;
-    let client = OpenAIClient::with_config(config);
-    let system_prompt =
-        "The following is a conversation with an AI assistant. The assistant is helpful, creative, clever, and very friendly.";
-    let system_message = ChatCompletionRequestSystemMessageArgs::default()
-        .content(system_prompt)
-        .build()
-        .expect("Failed to build system message")
-        .into();
-    let user_message = ChatCompletionRequestUserMessageArgs::default()
-        .content("user_input")
-        .build()
-        .expect("Failed to build user message")
-        .into();
-
-    let mut messages = vec![system_message, user_message];
-
-    if !restart {
-        messages.push(
-            ChatCompletionRequestUserMessageArgs::default().content("user_input").build()?.into()
-        );
-
-        let _res = chat_rounds_n(client, &mut messages, 512, "model").await?;
-    } else {
-        let _res = chat_rounds_n(client, &mut messages, 512, "model").await?;
-    }
-
-    Ok(())
 }
