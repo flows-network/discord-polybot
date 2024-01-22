@@ -121,7 +121,6 @@ async fn handle(msg: Message) {
     }
 
     let llm_client: OpenAIClient<LocalServiceProviderConfig> = create_llm_client();
-    let mut messages = Vec::new();
 
     if let Some((key, system_prompt, restart)) = prompt_checking() {
         let mut question = String::new();
@@ -167,11 +166,11 @@ async fn handle(msg: Message) {
             .expect("Failed to build user message")
             .into();
 
-        if restart {
-            messages = vec![system_message, user_message];
-        } else {
-            messages.push(user_message);
-        }
+        // if restart {
+        let mut  messages = vec![system_message, user_message];
+        // } else {
+        //     messages.push(user_message);
+        // }
         let _res = chat_rounds_n(llm_client, &mut messages, 512, "model").await.expect(
             "Failed to chat"
         );
